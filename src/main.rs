@@ -7,8 +7,9 @@ use dotenv::dotenv;
 use orders::model;
 /* use postgres::{Client, Error, NoTls}; */
 use serde::Deserialize;
+use serde_json::json;
 use std::str::FromStr;
-use tokio_postgres::{Client, Connection, Error, NoTls};
+use tokio_postgres::{Client, Error, NoTls};
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -18,14 +19,20 @@ struct Pagination {
 }
 
 async fn get_orders(pagination: web::Query<Pagination>) -> impl Responder {
-    let mut client = get_connection().await.unwrap();
+    let client = get_connection().await.unwrap();
 
     let offset = (pagination.page - 1) * pagination.per_page;
+
     let query = format!(
         "SELECT * FROM orders LIMIT {} OFFSET {}",
         pagination.per_page, offset
     );
 
+    let total_count: i64 = client
+        .query_one("SELECT COUNT(*) AS total_count FROM orders", &[])
+        .await
+        .unwrap()
+        .get("total_count");
     let mut orders = Vec::new();
     for row in client.query(query.as_str(), &[]).await.unwrap() {
         let order = OrderModel {
@@ -38,7 +45,7 @@ async fn get_orders(pagination: web::Query<Pagination>) -> impl Responder {
         orders.push(order);
     }
 
-    HttpResponse::Ok().json(orders)
+    HttpResponse::Ok().json(json!({"value":orders,"total_count":total_count}))
 }
 
 async fn get_order_by_id(order_id: web::Path<i32>) -> impl Responder {
@@ -103,7 +110,7 @@ async fn update_order(
 }
 
 async fn delete_order(order_id: web::Path<i32>) -> impl Responder {
-    let mut client = get_connection().await.unwrap();
+    let client = get_connection().await.unwrap();
 
     let query = "DELETE FROM orders WHERE id = $1";
     client
@@ -118,11 +125,11 @@ pub async fn init_database() -> Result<(), Error> {
     let client = get_connection().await.unwrap();
     client
         .execute(
-            "CREATE TABLE IF NOT EXISTS Order (
+            r#"CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY,
     created_at TIMESTAMP,
     customer_id UUID
-    )",
+    )"#,
             &[],
         )
         .await
