@@ -1,0 +1,14 @@
+[package]
+name = "orders"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.8.0"
+chrono = { version = "0.4.38", features = ["serde"] }
+dotenv = "0.15.0"
+uuid = { version = "1.9.1", features = ["serde", "v4"] }
+serde = { version = "1.0.203", features = ["derive"] }
+actix-cors = "0.7.0"
+tokio-postgres = "0.7.10"
+tokio = { version = "1.38.0", features = ["full"] }
