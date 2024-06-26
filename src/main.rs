@@ -1,14 +1,16 @@
+use deadpool_postgres::{Config, Pool};
 use model::{CreateOrderDTO, OrderModel, UpdateOrderDTO};
 
 use actix_cors::Cors;
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
-use chrono::DateTime;
+use actix_web::{
+    web::{self, Data},
+    App, HttpResponse, HttpServer, Responder,
+};
 use dotenv::dotenv;
 use orders::model;
 use serde::Deserialize;
 use serde_json::json;
-use std::str::FromStr;
-use tokio_postgres::{Client, Error, NoTls};
+use tokio_postgres::{Error, NoTls};
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -17,8 +19,8 @@ struct Pagination {
     per_page: i32,
 }
 
-async fn get_orders(pagination: web::Query<Pagination>) -> impl Responder {
-    let client = get_connection().await.unwrap();
+async fn get_orders(app_data: Data<Pool>, pagination: web::Query<Pagination>) -> impl Responder {
+    let client = app_data.get().await.unwrap();
 
     let offset = (pagination.page - 1) * pagination.per_page;
 
@@ -35,11 +37,10 @@ async fn get_orders(pagination: web::Query<Pagination>) -> impl Responder {
     let mut orders = Vec::new();
     for row in client.query(query.as_str(), &[]).await.unwrap() {
         let order = OrderModel {
-            id: Uuid::from_str(row.get("id")).unwrap(),
-            created_at: DateTime::parse_from_rfc3339(row.get("created_at"))
-                .unwrap()
-                .to_utc(),
-            customer_id: Uuid::from_str(row.get("customer_id")).unwrap(),
+            id: row.get("id"),
+            created_at: row.get("created_at"),
+
+            customer_id: row.get("customer_id"),
         };
         orders.push(order);
     }
@@ -47,11 +48,11 @@ async fn get_orders(pagination: web::Query<Pagination>) -> impl Responder {
     HttpResponse::Ok().json(json!({"value":orders,"total_count":total_count}))
 }
 
-async fn get_order_by_id(order_id: web::Path<Uuid>) -> impl Responder {
-    let client = get_connection().await.unwrap();
+async fn get_order_by_id(app_data: Data<Pool>, order_id: web::Path<Uuid>) -> impl Responder {
+    let client = app_data.get().await.unwrap();
 
     let row = client
-        .query_one(r#"SELECT * FROM "orders" WHERE id = $1"#, &[&*order_id])
+        .query_one("SELECT * FROM orders WHERE id = $1", &[&*order_id])
         .await
         .unwrap();
 
@@ -64,8 +65,11 @@ async fn get_order_by_id(order_id: web::Path<Uuid>) -> impl Responder {
     HttpResponse::Ok().json(order)
 }
 
-async fn create_order(new_order: web::Json<CreateOrderDTO>) -> impl Responder {
-    let client = get_connection().await.unwrap();
+async fn create_order(
+    app_data: Data<Pool>,
+    new_order: web::Json<CreateOrderDTO>,
+) -> impl Responder {
+    let client = app_data.get().await.unwrap();
     let new_uuid = Uuid::new_v4();
     let query = "INSERT INTO orders (id, created_at, customer_id) VALUES ($1, $2, $3) RETURNING id";
     let result = client
@@ -78,15 +82,16 @@ async fn create_order(new_order: web::Json<CreateOrderDTO>) -> impl Responder {
 
     HttpResponse::Ok().body(format!(
         "Created order with id: {}",
-        result.get::<usize, i32>(0)
+        result.get::<usize, Uuid>(0)
     ))
 }
 
 async fn update_order(
+    app_data: Data<Pool>,
     order_id: web::Path<Uuid>,
     updated_order: web::Json<UpdateOrderDTO>,
 ) -> impl Responder {
-    let client = get_connection().await.unwrap();
+    let client = app_data.get().await.unwrap();
 
     let query = "UPDATE orders SET created_at = $1, customer_id = $2 WHERE id = $3";
     client
@@ -104,8 +109,8 @@ async fn update_order(
     HttpResponse::Ok().body(format!("Updated order with id: {}", order_id))
 }
 
-async fn delete_order(order_id: web::Path<Uuid>) -> impl Responder {
-    let client = get_connection().await.unwrap();
+async fn delete_order(app_data: Data<Pool>, order_id: web::Path<Uuid>) -> impl Responder {
+    let client = app_data.get().await.unwrap();
 
     let query = "DELETE FROM orders WHERE id = $1";
     client
@@ -116,36 +121,36 @@ async fn delete_order(order_id: web::Path<Uuid>) -> impl Responder {
     HttpResponse::Ok().body(format!("Deleted order with id: {}", order_id))
 }
 
-pub async fn init_database() -> Result<(), Error> {
-    let client = get_connection().await.unwrap();
-    client
-        .execute(
-            r#"CREATE TABLE IF NOT EXISTS orders (
+pub fn get_pool() -> Result<Pool, Error> {
+    dotenv().ok();
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let mut cfg = Config::new();
+    cfg.url = Some(url);
+    let pool = cfg.create_pool(None, NoTls).unwrap();
+    Ok(pool)
+}
+pub fn get_pool_test() -> Result<Pool, Error> {
+    dotenv().ok();
+    let url = std::env::var("DATABASE_URL_TEST").unwrap();
+    let mut cfg = Config::new();
+    cfg.url = Some(url);
+    let pool = cfg.create_pool(None, NoTls).unwrap();
+    Ok(pool)
+}
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let pool = get_pool().unwrap();
+    let conn = pool.get().await.unwrap();
+    conn.execute(
+        r#"CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY,
     created_at TIMESTAMPTZ,
     customer_id UUID
     )"#,
-            &[],
-        )
-        .await
-        .unwrap();
-    Ok(())
-}
-pub async fn get_connection() -> Result<Client, Error> {
-    dotenv().ok();
-    let url = std::env::var("DATABASE_URL").unwrap();
-    let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
-    Ok(client)
-}
-
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    init_database().await.unwrap();
+        &[],
+    )
+    .await
+    .unwrap();
     HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -153,6 +158,7 @@ async fn main() -> std::io::Result<()> {
             .allow_any_header();
         App::new()
             .wrap(cors)
+            .app_data(Data::new(pool.clone()))
             .route("/orders", web::get().to(get_orders))
             .route("/orders/{id}", web::get().to(get_order_by_id))
             .route("/orders", web::post().to(create_order))
@@ -175,8 +181,26 @@ mod tests {
         Response = actix_web::dev::ServiceResponse,
         Error = actix_web::Error,
     > {
+        let pool_test = get_pool_test().unwrap();
+
+        let conn = pool_test.get().await.unwrap();
+        conn.execute("DROP TABLE IF EXISTS orders", &[])
+            .await
+            .unwrap();
+        conn.execute(
+            r#"CREATE TABLE IF NOT EXISTS orders (
+                id UUID PRIMARY KEY,
+                created_at TIMESTAMPTZ,
+            customer_id UUID
+            )"#,
+            &[],
+        )
+        .await
+        .unwrap();
+
         test::init_service(
             App::new()
+                .app_data(Data::new(pool_test))
                 .route("/orders", web::get().to(get_orders))
                 .route("/orders/{id}", web::get().to(get_order_by_id))
                 .route("/orders", web::post().to(create_order))
@@ -199,7 +223,21 @@ mod tests {
     #[actix_rt::test]
     async fn test_get_order_by_id() {
         let app = setup_test_app().await;
-        let req = test::TestRequest::get().uri("/orders/1").to_request();
+        let new_uuid = Uuid::new_v4();
+        let new_order = CreateOrderDTO {
+            created_at: Utc::now(),
+            customer_id: new_uuid,
+        };
+
+        let req = test::TestRequest::post()
+            .uri("/orders/")
+            .set_json(&new_order)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+
+        let req = test::TestRequest::get()
+            .uri(&format!("/orders/{new_uuid}"))
+            .to_request();
         let resp = test::call_service(&app, req).await;
         println!("{:?}", resp.status());
         assert!(resp.status().is_success());
@@ -223,12 +261,13 @@ mod tests {
     #[actix_rt::test]
     async fn test_update_order() {
         let app = setup_test_app().await;
+        let uuid = Uuid::new_v4();
         let updated_order = UpdateOrderDTO {
             created_at: Utc::now(),
-            customer_id: Uuid::new_v4(),
+            customer_id: uuid,
         };
         let req = test::TestRequest::put()
-            .uri("/orders/1")
+            .uri(&format!("/orders/{uuid}"))
             .set_json(&updated_order)
             .to_request();
         let resp = test::call_service(&app, req).await;
@@ -241,17 +280,5 @@ mod tests {
         let req = test::TestRequest::delete().uri("/orders/1").to_request();
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
-    }
-
-    #[tokio::test]
-    async fn test_init_database() {
-        let result = init_database().await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_get_connection() {
-        let result = get_connection().await;
-        assert!(result.is_ok());
     }
 }
