@@ -13,6 +13,8 @@ use serde_json::json;
 use tokio_postgres::{Error, NoTls};
 use uuid::Uuid;
 
+#[cfg(test)]
+mod integration_test;
 #[derive(Deserialize)]
 struct Pagination {
     page: i32,
@@ -112,9 +114,8 @@ async fn update_order(
 async fn delete_order(app_data: Data<Pool>, order_id: web::Path<Uuid>) -> impl Responder {
     let client = app_data.get().await.unwrap();
 
-    let query = "DELETE FROM orders WHERE id = $1";
     client
-        .execute(query, &[&order_id.to_string()])
+        .execute("DELETE FROM orders WHERE id = $1", &[&*order_id])
         .await
         .unwrap();
 
@@ -168,117 +169,4 @@ async fn main() -> std::io::Result<()> {
     .bind(("localhost", 8080))?
     .run()
     .await
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use actix_web::{test, web, App};
-    use chrono::Utc;
-    use uuid::Uuid;
-
-    async fn setup_test_app() -> impl actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    > {
-        let pool_test = get_pool_test().unwrap();
-
-        let conn = pool_test.get().await.unwrap();
-        conn.execute("DROP TABLE IF EXISTS orders", &[])
-            .await
-            .unwrap();
-        conn.execute(
-            r#"CREATE TABLE IF NOT EXISTS orders (
-                id UUID PRIMARY KEY,
-                created_at TIMESTAMPTZ,
-            customer_id UUID
-            )"#,
-            &[],
-        )
-        .await
-        .unwrap();
-
-        test::init_service(
-            App::new()
-                .app_data(Data::new(pool_test))
-                .route("/orders", web::get().to(get_orders))
-                .route("/orders/{id}", web::get().to(get_order_by_id))
-                .route("/orders", web::post().to(create_order))
-                .route("/orders/{id}", web::put().to(update_order))
-                .route("/orders/{id}", web::delete().to(delete_order)),
-        )
-        .await
-    }
-
-    #[actix_rt::test]
-    async fn test_get_orders() {
-        let app = setup_test_app().await;
-        let req = test::TestRequest::get()
-            .uri("/orders?page=1&per_page=10")
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success());
-    }
-
-    #[actix_rt::test]
-    async fn test_get_order_by_id() {
-        let app = setup_test_app().await;
-        let new_uuid = Uuid::new_v4();
-        let new_order = CreateOrderDTO {
-            created_at: Utc::now(),
-            customer_id: new_uuid,
-        };
-
-        let req = test::TestRequest::post()
-            .uri("/orders/")
-            .set_json(&new_order)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-
-        let req = test::TestRequest::get()
-            .uri(&format!("/orders/{new_uuid}"))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        println!("{:?}", resp.status());
-        assert!(resp.status().is_success());
-    }
-
-    #[actix_rt::test]
-    async fn test_create_order() {
-        let app = setup_test_app().await;
-        let new_order = CreateOrderDTO {
-            created_at: Utc::now(),
-            customer_id: Uuid::new_v4(),
-        };
-        let req = test::TestRequest::post()
-            .uri("/orders")
-            .set_json(&new_order)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success());
-    }
-
-    #[actix_rt::test]
-    async fn test_update_order() {
-        let app = setup_test_app().await;
-        let uuid = Uuid::new_v4();
-        let updated_order = UpdateOrderDTO {
-            created_at: Utc::now(),
-            customer_id: uuid,
-        };
-        let req = test::TestRequest::put()
-            .uri(&format!("/orders/{uuid}"))
-            .set_json(&updated_order)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success());
-    }
-
-    #[actix_rt::test]
-    async fn test_delete_order() {
-        let app = setup_test_app().await;
-        let req = test::TestRequest::delete().uri("/orders/1").to_request();
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success());
-    }
 }
