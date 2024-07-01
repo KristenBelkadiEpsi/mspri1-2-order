@@ -6,15 +6,42 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
+      POSTGRES_DB: orders
     ports:
-      - "5432:5432"
-
+      - "2345:2345"
+    command: -p 2345
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+    - orders-volume:/var/lib/postgresql/data
+  postgres_test:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: orders-test
+    ports:
+      - "2346:2346"
+    command: -p 2346
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - orders-test-volume:/var/lib/postgresql/data
   rust-app:
     build: .
     depends_on:
-      - postgres
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      postgres_test:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     ports:
-      - "8080:8080"
+      - "8085:8085"
+volumes:
+  orders-volume:
+  orders-test-volume:

@@ -7,10 +7,6 @@ WORKDIR /usr/src/app
 COPY . .
 
 
-RUN cargo build --release
+RUN cargo run --release
 
-
-EXPOSE 8080 
-
-
-CMD ["./target/release/orders"] 
+# RUN ["./target/release/orders"] 

@@ -128,6 +128,7 @@ pub fn get_pool() -> Result<Pool, Error> {
     let url = std::env::var("DATABASE_URL").unwrap();
     let mut cfg = Config::new();
     cfg.url = Some(url);
+
     let pool = cfg.create_pool(None, NoTls).unwrap();
     Ok(pool)
 }
@@ -142,6 +143,7 @@ pub fn get_pool_test() -> Result<Pool, Error> {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let pool = get_pool().unwrap();
+
     let conn = pool.get().await.unwrap();
     conn.execute(
         r#"CREATE TABLE IF NOT EXISTS orders (
@@ -167,7 +169,7 @@ async fn main() -> std::io::Result<()> {
             .route("/orders/{id}", web::put().to(update_order))
             .route("/orders/{id}", web::delete().to(delete_order))
     })
-    .bind(("localhost", 8080))?
+    .bind(("0.0.0.0", 8085))?
     .run()
     .await
 }
