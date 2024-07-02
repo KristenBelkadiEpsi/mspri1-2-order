@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  db:
+  db_order:
     image: postgres:latest
     environment:
       POSTGRES_USER: postgres
@@ -42,7 +42,7 @@ services:
     depends_on:
       db_test:
         condition: service_healthy
-      db:
+      db_order:
         condition: service_healthy
     ports:
       - "8085:8085"
