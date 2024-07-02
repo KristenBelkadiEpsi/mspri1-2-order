@@ -7,6 +7,5 @@ WORKDIR /usr/src/app
 COPY . .
 
 
-RUN cargo run --release
-
-# RUN ["./target/release/orders"] 
+RUN cargo build --release
+CMD ["./target/release/orders"]

@@ -1,12 +1,13 @@
 version: '3.8'
 
 services:
-  postgres:
+  db:
     image: postgres:latest
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: orders
+      PGUSER: postgres
     ports:
       - "2345:2345"
     command: -p 2345
@@ -17,12 +18,13 @@ services:
       retries: 5
     volumes:
     - orders-volume:/var/lib/postgresql/data
-  postgres_test:
+  db_test:
     image: postgres:latest
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: orders-test
+      PGUSER: postgres
     ports:
       - "2346:2346"
     command: -p 2346
@@ -34,11 +36,13 @@ services:
     volumes:
       - orders-test-volume:/var/lib/postgresql/data
   rust-app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     depends_on:
-      postgres_test:
+      db_test:
         condition: service_healthy
-      postgres:
+      db:
         condition: service_healthy
     ports:
       - "8085:8085"
